@@ -52,7 +52,10 @@ def calculate():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# Confirm the server is running    
+@app.route('/', methods=['GET'])
+def home():
+    return 'AHP API is running.'
+
 if __name__ == '__main__':
-    # local host
-    # app.run(host='127.0.0.1', port=5000, debug=True)
     app.run(host='0.0.0.0', port=8080)
