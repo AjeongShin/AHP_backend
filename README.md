@@ -48,18 +48,18 @@ CR = CI / RI
 
 Where RI (Random Index) is:
 
-| n  | RI   |
-|----|------|
-| 1  | 0.00 |
-| 2  | 0.00 |
-| 3  | 0.58 |
-| 4  | 0.90 |
-| 5  | 1.12 |
-| 6  | 1.24 |
-| 7  | 1.32 |
-| 8  | 1.41 |
-| 9  | 1.45 |
-| 10 | 1.49 |
+|   n   |   RI   |
+|-------|--------|
+|   1   |  0.00  |
+|   2   |  0.00  |
+|   3   |  0.58  |
+|   4   |  0.90  |
+|   5   |  1.12  |
+|   6   |  1.24  |
+|   7   |  1.32  |
+|   8   |  1.41  |
+|   9   |  1.45  |
+|   10  |  1.49  |
 
 ---
 
@@ -85,9 +85,9 @@ You should see output like:
 
 ---
 
-## ✅ Verify It Works
+## Verify It Works
 
-### Option 1: Test using `curl`
+### Test using `curl`
 
 Open a new terminal and run:
 
@@ -108,20 +108,6 @@ Expected output:
 }
 ```
 
-### Option 2: Add a root route (for health check)
-
-Add this to `app.py`:
-
-```python
-@app.route('/', methods=['GET'])
-def home():
-    return 'AHP API is running.'
-```
-
-Then visit [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser.
-
----
-
 ## Deployment Notes
 
 This app is deployed using **Google Cloud Build + Cloud Run**.
@@ -130,7 +116,5 @@ This app is deployed using **Google Cloud Build + Cloud Run**.
 
 You can `POST` to `/calculate` on that domain just like the local example.
 
-## License
-
-MIT License
+## MIT License
 ---
