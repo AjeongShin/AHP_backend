@@ -30,15 +30,16 @@ def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     # return value would be same with AHP(wiehg, ci, cr ..)
     ########################
     updated_w, updated_xi = minimize_xi(n, best_idx, worst_idx, aB, aW, epsilon)
-    low_weights = lower_bound_weights(n, best_idx, worst_idx, aB, aW, epsilon, updated_w, updated_xi)
-    upper_weights = maximize_weights(n, best_idx, worst_idx, aB, aW, epsilon, updated_w, updated_xi)
-    rank, ci, cr = calculate_rank(n, low_weights, upper_weights)
+    low_weights = lower_bound_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsilon)
+    upper_weights = maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsilon)
+    score, sorted_criteria = calculate_rank(n, criteria, low_weights, upper_weights)
+    ci, cr = statistics(updated_xi, aB, aW)
     weights = updated_w
-    # lambda_max = None  # Not applicable in BWM      
-    return weights, rank, ci, cr
+
+    return weights, score, sorted_criteria, ci, cr
 
 
-def create_constraints(n, best_idx, worst_idx, aB, aW, epsilon=1e-6, fixed_xi=None, use_xi_variable=True):
+def create_constraints(n, best_idx, worst_idx, aB, aW, fixed_xi=None, use_xi_variable=True, epsilon=1e-6):
     """
     Parameters:
     -----------
@@ -92,7 +93,7 @@ def create_constraints(n, best_idx, worst_idx, aB, aW, epsilon=1e-6, fixed_xi=No
                     weights = w
                     xi = fixed_xi
                 weight_worst = weights[worst_idx]
-                return xi - (w[j] / weight_worst + aW[j])
+                return xi - (w[j] / weight_worst - aW[j])
             return constraint
 
         
@@ -127,8 +128,8 @@ def minimize_xi(n, best_idx, worst_idx, aB, aW, epsilon=1e-6):
         return xi
     
     # constraints of equality and inequality
-    constraints = create_constraints(n, best_idx, worst_idx, aB, aW, epsilon,
-        fixed_xi=None, use_xi_variable=True)
+    constraints = create_constraints(n, best_idx, worst_idx, aB, aW,
+        fixed_xi=None, use_xi_variable=True, epsilon=epsilon )
     # bounds for weights and xi
     bounds = [(epsilon, None) for _ in range(n)] + [(0, None)]  # weights between epsilon and 1, xi >= 0
     
@@ -141,8 +142,8 @@ def minimize_xi(n, best_idx, worst_idx, aB, aW, epsilon=1e-6):
             'maxiter': 1000     
         }
     )
-    updated_w = result[:n].tolist()
-    updated_xi = result[-1]
+    updated_w = result.x[:n].tolist()
+    updated_xi = result.x[-1]
 
     return updated_w, updated_xi
 
@@ -153,7 +154,7 @@ def lower_bound_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, e
     low_weights = []
 
     # constraints of equality and inequality
-    constraints = create_constraints(n, best_idx, worst_idx, aB, aW, epsilon, fixed_xi=updated_xi, use_xi_variable=False )
+    constraints = create_constraints(n, best_idx, worst_idx, aB, aW, fixed_xi=updated_xi, use_xi_variable=False, epsilon=epsilon )
 
     # bounds for weights and xi
     bounds = [(epsilon, None) for _ in range(n)]  # weights between epsilon and 1
@@ -173,7 +174,7 @@ def lower_bound_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, e
             }
         )
 
-        min_weight = result[j]
+        min_weight = result.x[j]
         low_weights.append(min_weight)
 
     return low_weights
@@ -185,7 +186,7 @@ def maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsi
     upper_weights = []
 
     # constraints of equality and inequality
-    constraints = create_constraints(n, best_idx, worst_idx, aB, aW, epsilon, fixed_xi=updated_xi, use_xi_variable=False )
+    constraints = create_constraints(n, best_idx, worst_idx, aB, aW, fixed_xi=updated_xi, use_xi_variable=False, epsilon=epsilon )
 
     # bounds for weights and xi
     bounds = [(epsilon, None) for _ in range(n)]  # weights between epsilon and 1
@@ -195,7 +196,7 @@ def maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsi
     
     for j in range(n):
         def obj(w, j=j):
-            return w[j]
+            return -w[j]
         
         result = minimize(obj, w0, method='SLSQP', bounds=bounds, constraints=constraints,     
             options={
@@ -205,7 +206,7 @@ def maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsi
             }
         )
 
-        max_weight = result[j]
+        max_weight = result.x[j]
         upper_weights.append(max_weight)
 
     return upper_weights
@@ -213,12 +214,15 @@ def maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsi
 # ========================================
 # Step 4: Calculate DP, P
 # ========================================
-def calculate_rank(n, low_weights, upper_weights):
+def calculate_rank(n, criteria, low_weights, upper_weights):
     interval = list(zip(low_weights, upper_weights))
 
-    def compare_preference(A, B):
-        nominator = max(0, interval[A][1], interval[B][0]) - max(0, interval[A][0], interval[B][1])
-        denominator = (interval[A][1] - interval[A][0]) + (interval[B][1] - interval[B][0])
+    def compare_preference(interval_A, interval_B):
+        a_L, a_R = interval_A
+        b_L, b_R = interval_B
+
+        nominator = max(0, a_R - b_L) - max(0, a_L - b_R)
+        denominator = (a_R - a_L) + (b_R - b_L)
         P_grt = nominator / denominator if denominator != 0 else 0
 
         if P_grt > 0.5:
@@ -247,20 +251,83 @@ def calculate_rank(n, low_weights, upper_weights):
                     P[i][j] = 0
         return P
     
-    def calculate_sum(n, preference_matrix):
-        rank = []
-        for i in range(n):
-            rank.append(np.sum(preference_matrix[i]))
-        return rank
-    
-    def statistics(rank):
-        ci = np.std(rank) / np.mean(rank) if np.mean(rank) != 0 else 0
-        ri = get_random_index(n)
-        cr = ci / ri if ri != 0 else 0
-        return ci, cr
+    def calculate_sum(criteria, preference_matrix):
+        # rank = []
+        # for i in range(n):
+        #     rank.append(np.sum(preference_matrix[i]))
+        score = np.sum(preference_matrix, axis=1)
+        desc_indices = np.argsort(-score)
 
+        # find same rank criteria
+        def is_same_rank(score, desc_indices):
+            final_indices = [] # [[idx1, idx2], [idx3], ...]
+            # group = [] # [('critA','critB'), 'critC', ...]
+            n = len(desc_indices)
+            i = 0
+            while i< n:
+                current_idx = desc_indices[i]
+                current_score = score[current_idx]
+                group = [current_idx]
+                j = i + 1
+                while j < n and score[desc_indices[j]] == current_score:
+                    group.append(desc_indices[j])
+                    j += 1
+                final_indices.append(group)
+                i = j
+
+            return final_indices
+        
+        final_indices = is_same_rank(score, desc_indices)
+
+        # transform to criteria 
+        ordered_criteria = []
+        for group in final_indices:
+            if len(group) == 1:
+                ordered_criteria.append(criteria[group[0]])
+            else:
+                ordered_criteria.append(tuple(criteria[idx] for idx in group))
+        
+        return score, ordered_criteria
+    
     DP = calculate_similarity_matrix(n, interval)
     P = calculate_preference_matrix(n, DP)
-    rank = calculate_sum(n, P)
-    ci, cr = statistics(rank)
-    return rank, ci, cr
+    score, order_criteria = calculate_sum(criteria, P)
+    if isinstance(score, np.ndarray):
+        score = score.tolist() # .tolist() for jsonify
+
+    return score, order_criteria
+
+# ========================================
+# Step 5: Calculate CI, CR
+# ========================================
+def statistics(updated_xi, aB, aW):
+
+    def get_consistency_index_bwm(aB, aW):
+        a_BW = aB @ aW
+        """BWM Consistency Index lookup table"""
+        ci_table = {
+            1: 0.00, 2: 0.44, 3: 1.00, 4: 1.63, 5: 2.30,
+            6: 3.00, 7: 3.73, 8: 4.47, 9: 5.23
+        }
+        return ci_table.get(a_BW, 5.23)  # a_BW > 9이면 5.23 사용
+    """
+    BWM Consistency Ratio calculation
+    
+    Parameters:
+    -----------
+    updated_xi : float
+        Optimal xi value (ξ*)
+    a_BW : int
+        Best-to-Worst comparison value
+    
+    Returns:
+    --------
+    ci : float
+        Consistency Index from lookup table
+    cr : float
+        Consistency Ratio = ξ* / CI
+    """
+
+    ci = get_consistency_index_bwm(aB, aW)
+    cr = updated_xi / ci if ci != 0 else 0
+    return ci, cr

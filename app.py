@@ -49,17 +49,20 @@ def bwm_calculate():
         aW = np.array(data['worstCol'], dtype=float)
 
         # Use Eigenvector method for calculation
-        weights, rank, ci, cr = linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
-
-        return jsonify({
+        weights, score, sorted_criteria, ci, cr = linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
+        
+        payload = {
             'weights': weights,
-            'rank': rank,
+            'score': score,
+            'sorted_criteria': sorted_criteria,
             'ci': ci,
-            'cr': cr
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+            'cr': cr,
+        }
 
+        return jsonify(payload)
+    except Exception as e:
+        # return jsonify({'error': str(e)}), 500
+        return jsonify({'error': repr(e)}), 500
 
 # Confirm the server is running    
 @app.route('/', methods=['GET'])
