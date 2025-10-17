@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from tradeoff_methods import ahp_eigen_solver
-from tradeoff_methods import linear_bwm_solver
+from tradeoff_methods import linear_bwm_solver, non_linear_bwm_solver
 
 import numpy as np
 
@@ -41,6 +41,7 @@ def bwm_calculate():
 
     try:
         # Parcing dictionary to element
+        bwm_variant = data['variant']
         n = int(data['n'])
         criteria = data['criteria']
         best_idx = int(data['bestIdx'])
@@ -49,10 +50,17 @@ def bwm_calculate():
         aW = np.array(data['worstCol'], dtype=float)
 
         # Use Eigenvector method for calculation
-        weights, score, sorted_criteria, ci, cr = linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
-        
+        if bwm_variant == 'linear':
+            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr = linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
+        elif bwm_variant == 'nonlinear':
+            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr = non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
+        else:
+            return True
+
         payload = {
-            'weights': weights,
+            'crisp_weights': crisp_weights,
+            'lower_weights': lower_weights,
+            'upper_weights': upper_weights,
             'score': score,
             'sorted_criteria': sorted_criteria,
             'ci': ci,
