@@ -1,35 +1,15 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from tradeoff_methods import ahp_eigen_solver
+from tradeoff_methods import linear_bwm_solver, non_linear_bwm_solver
+
 import numpy as np
 
 app = Flask(__name__)
 CORS(app)
 
-# Function to get RI (Random Index) value
-def get_random_index(n):
-    ri_table = {
-        1: 0.0, 2: 0.0, 3: 0.58, 4: 0.90, 5: 1.12,
-        6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49
-    }
-    return ri_table.get(n, 1.49)
-
-# Calculation function based on the Eigenvector method
-def calculate_ahp_eigen(matrix):
-    eigenvalues, eigenvectors = np.linalg.eig(matrix)
-    max_index = np.argmax(eigenvalues.real)
-    lambda_max = eigenvalues.real[max_index]
-    eigenvector = np.abs(eigenvectors[:, max_index].real)
-    weights = eigenvector / np.sum(eigenvector)
-
-    n = matrix.shape[0]
-    ci = (lambda_max - n) / (n - 1) if n > 1 else 0
-    ri = get_random_index(n)
-    cr = ci / ri if ri else 0
-
-    return weights.tolist(), lambda_max, ci, cr
-
-@app.route('/calculate', methods=['POST'])
-def calculate():
+@app.route('/ahp_calculate', methods=['POST'])
+def ahp_calculate():
     data = request.get_json()
     if not data or 'matrix' not in data:
         return jsonify({'error': 'No matrix provided'}), 400
@@ -41,7 +21,7 @@ def calculate():
         matrix = raw_matrix[np.ix_(valid_indices, valid_indices)]
 
         # Use Eigenvector method for calculation
-        weights, lambda_max, ci, cr = calculate_ahp_eigen(matrix)
+        weights, lambda_max, ci, cr = ahp_eigen_solver(matrix)
 
         return jsonify({
             'weights': weights,
@@ -51,6 +31,46 @@ def calculate():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/bwm_calculate', methods=['POST'])
+def bwm_calculate():
+    data = request.get_json()
+    # if not data or 'matrix' not in data:
+    #     return jsonify({'error': 'No matrix provided'}), 400
+
+    try:
+        # Parcing dictionary to element
+        bwm_variant = data['variant']
+        n = int(data['n'])
+        criteria = data['criteria']
+        best_idx = int(data['bestIdx'])
+        worst_idx = int(data['worstIdx'])
+        aB = np.array(data['bestRow'], dtype=float)
+        aW = np.array(data['worstCol'], dtype=float)
+
+        # Use Eigenvector method for calculation
+        if bwm_variant == 'linear':
+            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr = linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
+        elif bwm_variant == 'nonlinear':
+            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr = non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
+        else:
+            return True
+
+        payload = {
+            'crisp_weights': crisp_weights,
+            'lower_weights': lower_weights,
+            'upper_weights': upper_weights,
+            'score': score,
+            'sorted_criteria': sorted_criteria,
+            'ci': ci,
+            'cr': cr,
+        }
+
+        return jsonify(payload)
+    except Exception as e:
+        # return jsonify({'error': str(e)}), 500
+        return jsonify({'error': repr(e)}), 500
 
 # Confirm the server is running    
 @app.route('/', methods=['GET'])
