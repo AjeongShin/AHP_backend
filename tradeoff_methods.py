@@ -26,6 +26,141 @@ def ahp_eigen_solver(matrix):
 
     return weights.tolist(), lambda_max, ci, cr
 
+def triangular_fuzzy_ahp_solver(n, criteria, pairwise_matrix):
+    """
+    Parameters:
+    -----------
+    n : int
+        Number of criteria
+    criteria : list[str]
+        List of criterion names
+    pairwise_matrix : list[list[list[float]]]
+        Pairwise comparison matrix as TFNs: [[[l11,c11,r11], [l12,c12,r12], ...], [...], ...]
+
+    Returns:
+    --------
+    crisp_weights, lower_weights, upper_weights, score, sorted_criteria, 
+    lambda_max, ci, cr, weights(TFN tuples), None    
+    """
+
+    # -----------------------------------------
+    # Calculate coefficiet for Left, Center, Right
+    # -----------------------------------------
+    def calculate_coefficient(n, pairwise_matrix):
+        coeff_min = np.zeros(n)
+        coeff_max = np.zeros(n)
+        
+        for i in range(n):
+            prod_l = 1.0
+            prod_c = 1.0
+            prod_u = 1.0
+
+            for j in range(n):
+                prod_l *= pairwise_matrix[i][j][0]  # l_ij
+                prod_c *= pairwise_matrix[i][j][1]  # c_ij
+                prod_u *= pairwise_matrix[i][j][2]  # r_ij
+            coeff_min[i] = (prod_c ** (1/n)) / (prod_l ** (1/n))
+            coeff_max[i] = (prod_c ** (1/n)) / (prod_u ** (1/n))
+        
+        c_min = np.min(coeff_min)
+        c_max = np.max(coeff_max)
+        
+        return c_min, c_max
+
+    # -----------------------------------------
+    # Calculate weights from pairwise comparison matrix
+    # -----------------------------------------
+    def calculate_weights(n, pairwise_matrix, c_min, c_max):
+        geomean_l = np.zeros(n)
+        geomean_c = np.zeros(n)
+        geomean_r = np.zeros(n)
+
+        for i in range(n):
+            prod_l = 1.0
+            prod_c = 1.0
+            prod_r = 1.0
+
+            for j in range(n):
+                prod_l *= pairwise_matrix[i][j][0]  # l_ij
+                prod_c *= pairwise_matrix[i][j][1]  # c_ij
+                prod_r *= pairwise_matrix[i][j][2]  # r_ßij
+
+            geomean_l[i] = prod_l ** (1/n)
+            geomean_c[i] = prod_c ** (1/n)
+            geomean_r[i] = prod_r ** (1/n)
+
+        sun_geomean_c = np.sum(geomean_c)
+
+        weight_l = c_min * geomean_l / sun_geomean_c
+        weight_c = geomean_c / sun_geomean_c
+        weight_r = c_max * geomean_r / sun_geomean_c
+
+        weights_tfn = list(zip(weight_l, weight_c, weight_r))
+        return weight_l, weight_c, weight_r, weights_tfn
+
+    
+    # -----------------------------------------
+    # Calculate ranking based on crisp weights
+    # -----------------------------------------
+    def calculate_rank(n, criteria, weight_c):
+        crisp_weights = weight_c
+        desc_indices = np.argsort(-crisp_weights)
+
+        # find same rank criteria
+        def is_same_rank(weights, desc_indices):
+            final_indices = [] # [[idx1, idx2], [idx3], ...]
+            # group = [] # [('critA','critB'), 'critC', ...]
+            n = len(desc_indices)
+            i = 0
+            while i< n:
+                current_idx = desc_indices[i]
+                current_weights = weights[current_idx]
+                group = [current_idx]
+                j = i + 1
+                while j < n and weights[desc_indices[j]] == current_weights:
+                    group.append(desc_indices[j])
+                    j += 1
+                final_indices.append(group)
+                i = j
+
+            return final_indices
+        
+
+        final_indices = is_same_rank(crisp_weights, desc_indices)
+
+        # transform to criteria 
+        ordered_criteria = []
+        for group in final_indices:
+            if len(group) == 1:
+                ordered_criteria.append(criteria[group[0]])
+            else:
+                ordered_criteria.append(tuple(criteria[idx] for idx in group))
+        
+        score = crisp_weights.copy()
+
+        return score, ordered_criteria, crisp_weights
+    
+    # ========================================
+    # Calculate lambda_max, CI(output-based), CR
+    # ========================================
+    def statistics(n, pairwise_matrix):
+
+        A_center = np.array([[pairwise_matrix[i][j][1] for j in range(n)] for i in range(n)])
+        _, lambda_max, ci, cr = ahp_eigen_solver(A_center)
+
+        return lambda_max, ci, cr
+    
+    #########################
+    c_min, c_max = calculate_coefficient(n, pairwise_matrix)
+    weight_l, weight_c, weight_r, weights_tfn = calculate_weights(n, pairwise_matrix, c_min, c_max)
+    score, sorted_criteria, crisp_weights = calculate_rank(n, criteria, weight_c)
+    lambda_max, ci, cr = statistics(n, pairwise_matrix)
+    print("\n=== weights_tfn ===", weights_tfn)
+    float_weights_tfn = [(float(l), float(c), float(r)) for l, c, r in weights_tfn]
+    print("\n=== float_weights_tfn ===", float_weights_tfn)
+
+    return crisp_weights, weight_l, weight_r, score, sorted_criteria, lambda_max, ci, cr, float_weights_tfn, None
+
 def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
 
     def create_constraints(n, best_idx, worst_idx, aB, aW, fixed_xi=None, use_xi_variable=True, epsilon=1e-6):
@@ -700,3 +835,279 @@ def non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6
 
 
     return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr
+
+def triangular_fuzzy_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
+    """
+    Parameters:
+    -----------
+    n : int
+        Number of criteria
+    criteria : list[str]
+        List of criterion names
+    best_idx : int
+        Index of best criterion
+    worst_idx : int
+        Index of worst criterion
+    aB : list[list[float]]
+        Best-to-Others vector as TFNs: [[l1,m1,u1], [l2,m2,u2], ...]
+    aW : list[list[float]]
+        Others-to-Worst vector as TFNs: [[l1,m1,u1], [l2,m2,u2], ...]
+    epsilon : float
+        Small value to prevent division by zero
+    
+    Returns:
+    --------
+    crisp_weights, lower_weights, upper_weights, sorted_criteria, ci, cr
+    """
+    # -------------------------------
+    # TFN Operations
+    # -------------------------------
+    def tfn_division(tfn1, tfn2, eps=1e-6):
+        """TFN division: (l,m,u) / (l',m',u') = (l/u', m/m', u/l')"""
+        return [tfn1[0] / max(tfn2[2], eps), tfn1[1] / max(tfn2[1], eps), tfn1[2] / max(tfn2[0], eps)]
+    
+    def tfn_subtraction(tfn1, tfn2):
+        """TFN subtraction: (l1,m1,u1) - (l2,m2,u2) = (l1-u2, m1-m2, u1-l2)"""
+        return [tfn1[0] - tfn2[2], tfn1[1] - tfn2[1], tfn1[2] - tfn2[0]]
+    
+    def tfn_graded_mean(tfn):
+        """Graded mean: R(l,m,u) = (l + 4m + u) / 6"""
+        return (tfn[0] + 4*tfn[1] + tfn[2]) / 6.0
+
+    # -----------------------------------------
+    # Step1: Find minimize k*, w* 
+    # -----------------------------------------
+    def minimize_k_fuzzybwm(n, best_idx, worst_idx, aB, aW, eps):
+        # w: [w1,...,wn, k] = [l1,m1,u1, l2,m2,u2, ..., ln,mn,un, k*]
+        # scipy.minimize requires flat 1D array
+
+        def obj(w):  # minimize xi_R
+            return w[-1]
+
+        # Σ R(w_j) = 1
+        def constraint_eq(w):
+            total = 0.0
+            for j in range(n):
+                w_j = [w[3*j], w[3*j+1], w[3*j+2]]
+                total += tfn_graded_mean(w_j)
+            return total - 1.0
+
+        constraints = [{'type': 'eq', 'fun': constraint_eq}]
+
+        # l_j ≤ m_j ≤ u_j
+        for j in range(n):
+            def make_l_m_constraint(idx):
+                def constraint(w):
+                    return w[3*idx+1] - w[3*idx]
+                return constraint
+            
+            def make_m_u_constraint(idx):
+                def constraint(w):
+                    return w[3*idx+2] - w[3*idx+1]
+                return constraint
+            
+            constraints.append({'type': 'ineq', 'fun': make_l_m_constraint(j)})
+            constraints.append({'type': 'ineq', 'fun': make_m_u_constraint(j)})
+        
+
+        for j in range(n):
+            # Best-to-Others: |(w_B/w_j) - a_Bj| ≤ (k*,k*,k*)
+            for s in range(3):  # s=0(l),1(m),2(u)
+                def c_best_pos(w, j=j, s=s):
+                    wB = [w[3*best_idx], w[3*best_idx+1], w[3*best_idx+2]]
+                    wj = [w[3*j], w[3*j+1], w[3*j+2]]
+                    k = w[-1]
+
+                    division = tfn_division(wB, wj, eps)
+                    return k - (division[s] - aB[j][s])
+                
+                def c_best_neg(w, j=j, s=s):
+                    wB = [w[3*best_idx], w[3*best_idx+1], w[3*best_idx+2]]
+                    wj = [w[3*j], w[3*j+1], w[3*j+2]]
+                    k = w[-1]
+
+                    division = tfn_division(wB, wj, eps)
+                    return k + (division[s] - aB[j][s])
+
+                # #################### vector form ####################
+                # def c_best_pos(w, j=j):
+                #     wB = np.array([w[3*best_idx], w[3*best_idx+1], w[3*best_idx+2]], dtype=float)
+                #     wj = np.array([w[3*j+2], w[3*j+1], w[3*j]], dtype=float)
+                #     k = w[-1]
+                #     aBj = np.array(aB[j], dtype=float) 
+
+                #     return k*wj - (wB - aBj*wj)
+
+
+                # def c_best_neg(w, j=j):
+                #     wB = np.array([w[3*best_idx], w[3*best_idx+1], w[3*best_idx+2]], dtype=float)
+                #     wj = np.array([w[3*j+2], w[3*j+1], w[3*j]], dtype=float)
+                #     k = w[-1]
+                #     aBj = np.array(aB[j], dtype=float) 
+
+                #     return k*wj + (wB - aBj*wj)
+                
+
+                constraints += [
+                    {'type': 'ineq', 'fun': c_best_pos},
+                    {'type': 'ineq', 'fun': c_best_neg},
+                ]
+                
+            # Others-to-Worst: |(w_j/w_W) - a_jW| ≤ (k*,k*,k*)
+            for s in range(3):  # s=0(l),1(m),2(u)
+                def c_worst_pos(w, j=j, s=s):
+                    wW = [w[3*worst_idx], w[3*worst_idx+1], w[3*worst_idx+2]]
+                    wj = [w[3*j], w[3*j+1], w[3*j+2]]
+                    k = w[-1]
+
+                    division = tfn_division(wj, wW, eps)
+                    return k - (division[s] - aW[j][s])
+
+                def c_worst_neg(w, j=j, s=s):
+                    wW = [w[3*worst_idx], w[3*worst_idx+1], w[3*worst_idx+2]]
+                    wj = [w[3*j], w[3*j+1], w[3*j+2]]
+                    k = w[-1]
+
+                    division = tfn_division(wj, wW, eps)
+                    return k + (division[s] - aW[j][s])
+
+                # #################### vector form ####################
+                # def c_worst_pos(w, j=j):
+                #     wW = np.array([w[3*worst_idx+2], w[3*worst_idx+1], w[3*worst_idx]], dtype=float)
+                #     wj = np.array([w[3*j], w[3*j+1], w[3*j+2]],dtype=float)
+                #     k = w[-1]
+                #     aWj = np.array(aW[j], dtype=float)
+
+                #     return k*wW - (wj - aWj*wW)
+
+
+                # def c_worst_neg(w, j=j):
+                #     wW = np.array([w[3*worst_idx+2], w[3*worst_idx+1], w[3*worst_idx]], dtype=float)
+                #     wj = np.array([w[3*j], w[3*j+1], w[3*j+2]],dtype=float)
+                #     k = w[-1]
+                #     aWj = np.array(aW[j], dtype=float)
+
+                #     return k*wW + (wj - aWj*wW)
+
+                
+                constraints += [
+                    {'type': 'ineq', 'fun': c_worst_pos},
+                    {'type': 'ineq', 'fun': c_worst_neg},
+                ]
+
+        bounds = [(eps, 1.0) for _ in range(3*n)] + [(0.0, None)]  # w_i∈[eps,1], xi_R≥0
+        w0 = np.array([1.0/n]*(3*n) + [1.0]) 
+
+        res = minimize(
+            obj, w0, method='SLSQP', bounds=bounds, constraints=constraints,
+            options={'ftol': 1e-12, 'maxiter': 5000, 'disp': False}
+        )
+        # updated_w = res.x[:-1].tolist()
+        updated_w = [[res.x[3*j], res.x[3*j+1], res.x[3*j+2]] for j in range(n)]
+        k_star = float(res.x[-1])
+        return updated_w, k_star
+
+    # ========================================
+    # Step 2: Calculate DP, P
+    # ========================================
+    def calculate_rank(n, criteria, updated_w):
+        crisp_weights = np.array([tfn_graded_mean(updated_w[i]) for i in range(n)])
+        desc_indices = np.argsort(-crisp_weights)
+
+        # find same rank criteria
+        def is_same_rank(weights, desc_indices):
+            final_indices = [] # [[idx1, idx2], [idx3], ...]
+            # group = [] # [('critA','critB'), 'critC', ...]
+            n = len(desc_indices)
+            i = 0
+            while i< n:
+                current_idx = desc_indices[i]
+                current_weights = weights[current_idx]
+                group = [current_idx]
+                j = i + 1
+                while j < n and weights[desc_indices[j]] == current_weights:
+                    group.append(desc_indices[j])
+                    j += 1
+                final_indices.append(group)
+                i = j
+
+            return final_indices
+        
+
+        final_indices = is_same_rank(crisp_weights, desc_indices)
+
+        # transform to criteria 
+        ordered_criteria = []
+        for group in final_indices:
+            if len(group) == 1:
+                ordered_criteria.append(criteria[group[0]])
+            else:
+                ordered_criteria.append(tuple(criteria[idx] for idx in group))
+        
+        score = crisp_weights.copy()
+
+        return score, ordered_criteria, crisp_weights
+
+    # ========================================
+    # Step 2: Calculate crisp weight, CI(output-based), CR
+    # ========================================
+    def statistics(n, k_star, aB, worst_idx, updated_w, crisp_weights):
+
+        def get_consistency_index_fuzzy_bwm(aB, worst_idx):
+            SCALE = {
+                'EI': (1.0, 1.0, 1.0),
+                'WI': (2/3, 1.0, 3/2),
+                'FI': (3/2, 2.0, 5/2),
+                'VI': (5/2, 3.0, 7/2),
+                'AI': (7/2, 4.0, 9/2),
+            }
+
+            """BWM Consistency Index lookup table"""
+            ci_table = {
+                'EI': 3.00, 'WI': 3.80, 'FI': 5.29, 'VI': 6.69, 'AI': 8.04
+            }
+
+            a_BW_value = aB[worst_idx]
+            a_BW_label = None
+
+            for label, tfn in SCALE.items():
+                if np.allclose(a_BW_value, tfn, atol=1e-6):
+                    a_BW_label = label
+                    break
+
+            return ci_table.get(a_BW_label, None), a_BW_label
+
+        ci, _ = get_consistency_index_fuzzy_bwm(aB, worst_idx)
+        if ci != None:
+            cr = k_star / ci if ci != 0 else 0
+        else:
+            cr = None # if ci is None, cr is also None
+        return ci, cr, crisp_weights
+    
+    #########################
+    # solve optimization prob(linear BWM) by using scipy.linprog 
+    # return value would be same with AHP(wiehg, ci, cr ..)
+    #######################
+    updated_w, k_star = minimize_k_fuzzybwm(n, best_idx, worst_idx, aB, aW, epsilon)
+    score, sorted_criteria, crisp_weights = calculate_rank(n, criteria, updated_w)
+    ci, cr, crisp_weights = statistics(n, k_star, aB, worst_idx, updated_w, crisp_weights)
+
+    # debugging print
+    print("\n=== updated_w ===")
+    print(updated_w)
+
+    print("\n=== k_star ===")
+    print(k_star)
+
+    print("\n=== ci ===")
+    print(ci)
+
+    print("\n=== cr ===")
+    print(cr)
+
+    print("\n=== crisp_weights ===")
+    print(crisp_weights)
+
+    return crisp_weights, None, None, score, sorted_criteria, ci, cr, updated_w, k_star
+
+        
