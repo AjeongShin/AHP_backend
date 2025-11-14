@@ -24,7 +24,19 @@ def ahp_eigen_solver(matrix):
     ri = get_random_index(n)
     cr = ci / ri if ri else 0
 
-    return weights.tolist(), lambda_max, ci, cr
+    # calculate consistency
+    wegiths_list = weights.tolist()
+    inconsistency_ratios = []
+    
+    # for i in range(n):
+    #     for j in range(n):
+    #         inconsistency_ratios.append((wegiths_list[i] / wegiths_list[j]) / matrix[i][j])
+
+    inconsistency_ratios = [
+        [(wegiths_list[i] / wegiths_list[j]) / matrix[i][j] for j in range(n)]
+        for i in range(n)
+    ]
+    return weights.tolist(), lambda_max, ci, cr, inconsistency_ratios
 
 def triangular_fuzzy_ahp_solver(n, criteria, pairwise_matrix):
     """
@@ -146,7 +158,7 @@ def triangular_fuzzy_ahp_solver(n, criteria, pairwise_matrix):
     def statistics(n, pairwise_matrix):
 
         A_center = np.array([[pairwise_matrix[i][j][1] for j in range(n)] for i in range(n)])
-        _, lambda_max, ci, cr = ahp_eigen_solver(A_center)
+        _, lambda_max, ci, cr, _ = ahp_eigen_solver(A_center)
 
         return lambda_max, ci, cr
     

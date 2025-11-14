@@ -30,17 +30,17 @@ def ahp_calculate():
 
         lower_weights, upper_weights = None, None
         updated_w, k_star = None, None
+        inconsistency_ratios = None
 
         # Use Eigenvector method for calculation
         if ahp_variant == 'origin':
-            crisp_weights, lambda_max, ci, cr = ahp_eigen_solver(matrix)
+            crisp_weights, lambda_max, ci, cr, inconsistency_ratios = ahp_eigen_solver(matrix)
             score, sorted_criteria = None, None
         else: # 'fuzzy' (triangular_fuzzy_ahp_solver)
             # print("before solver", flush=True)
             # print("matrix:", matrix, type(matrix), flush=True)
             crisp_weights, lower_weights, upper_weights, score, sorted_criteria, lambda_max, ci, cr, updated_w, k_star = triangular_fuzzy_ahp_solver(n, criteria, matrix)
             # print("updated_w:", updated_w, type(updated_w))
-
             if lower_weights is None and upper_weights is None and isinstance(updated_w, list):
                 lower_weights = [float(t[0]) for t in updated_w]
                 upper_weights = [float(t[2]) for t in updated_w]
@@ -53,6 +53,8 @@ def ahp_calculate():
             upper_weights = upper_weights.tolist()
         if isinstance(score, np.ndarray):
             score = score.tolist()
+        if isinstance(inconsistency_ratios, np.ndarray):
+            inconsistency_ratios = inconsistency_ratios.tolist()
 
 
         payload = {
@@ -64,6 +66,7 @@ def ahp_calculate():
             'lambdaMax': lambda_max,
             'ci': ci,
             'cr': cr,
+            'inconsistency_ratios': inconsistency_ratios,
             'extra':{
                 'tfn_weights': updated_w,
                 'k_star': k_star,
