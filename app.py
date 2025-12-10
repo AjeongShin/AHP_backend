@@ -96,12 +96,13 @@ def bwm_calculate():
 
         lower_weights, upper_weights = None, None
         updated_w, k_star = None, None
+        inconsistency_ratios = None
 
         # Use Eigenvector method for calculation
         if bwm_variant == 'linear':
-            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr = linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
+            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr, inconsistency_ratios = linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
         elif bwm_variant == 'nonlinear':
-            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr = non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
+            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr, inconsistency_ratios = non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
         # else:
         #     crisp_weights, _, _, score, sorted_criteria, ci, cr, updated_w, k_star = triangular_fuzzy_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6)
         else: # 'fuzzy' (triangular_fuzzy_bwm_solver)
@@ -115,6 +116,8 @@ def bwm_calculate():
             crisp_weights = crisp_weights.tolist()
         if isinstance(score, np.ndarray):
             score = score.tolist()
+        if isinstance(inconsistency_ratios, np.ndarray):
+            inconsistency_ratios = inconsistency_ratios.tolist()
 
         payload = {
             'crisp_weights': crisp_weights,
@@ -124,6 +127,10 @@ def bwm_calculate():
             'sorted_criteria': sorted_criteria,
             'ci': ci,
             'cr': cr,
+
+            # [ADDED] AHP-style inconsistency (BWM)
+            'inconsistency_ratios': inconsistency_ratios,
+
             'extra':{
                 'tfn_weights': updated_w,
                 'k_star': k_star,

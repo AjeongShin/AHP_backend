@@ -173,6 +173,37 @@ def triangular_fuzzy_ahp_solver(n, criteria, pairwise_matrix):
 
     return crisp_weights, weight_l, weight_r, score, sorted_criteria, lambda_max, ci, cr, float_weights_tfn, None
 
+def calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW, eps=1e-9):
+    """
+    AHP-style inconsistency ratios for BWM
+    - use CENTER (crisp) weights
+    - only declared comparisons (Best→Others, Others→Worst)
+    """
+
+    w = np.array(crisp_weights, dtype=float)
+
+    wB = max(w[best_idx], eps)
+    wW = max(w[worst_idx], eps)
+
+    # Best → Others inconsistency
+    bwo = []
+    for j in range(len(w)):
+        wj = max(w[j], eps)
+        aBj = max(aB[j], eps)
+        bwo.append((wB / wj) / aBj)
+
+    # Others → Worst inconsistency
+    wwo = []
+    for i in range(len(w)):
+        wi = max(w[i], eps)
+        aWi = max(aW[i], eps)
+        wwo.append((wi / wW) / aWi)
+
+    return {
+        "best_to_others": bwo,
+        "others_to_worst": wwo
+    }
+
 def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
 
     def create_constraints(n, best_idx, worst_idx, aB, aW, fixed_xi=None, use_xi_variable=True, epsilon=1e-6):
@@ -503,6 +534,7 @@ def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     upper_weights = maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsilon)
     DP, P, score, sorted_criteria = calculate_rank(n, criteria, lower_weights, upper_weights)
     ci, cr, a_BW, updated_xi, crisp_weights = statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights)
+    inconsistency_ratios = calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW)
 
     # debugging print
     print("\n=== a_BW ===")
@@ -520,7 +552,10 @@ def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     print("\n=== crisp_weights ===")
     print(crisp_weights)
 
-    return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr
+    print("\n=== inconsistency_ratios ===")
+    print(inconsistency_ratios)
+
+    return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr, inconsistency_ratios 
 
 def non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     # -------------------------------
@@ -817,6 +852,7 @@ def non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6
     upper_weights = maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi)
     DP, P, score, sorted_criteria = calculate_rank(n, criteria, lower_weights, upper_weights)
     ci, cr, a_BW, updated_xi, crisp_weights = statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights)
+    inconsistency_ratios = calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW)
 
     # debugging print
     # print("\n=== DP Matrix ===")
@@ -844,9 +880,10 @@ def non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6
     print("\n=== crisp_weights ===")
     print(crisp_weights)
 
+    print("\n=== inconsistency_ratios ===")
+    print(inconsistency_ratios)
 
-
-    return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr
+    return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr, inconsistency_ratios
 
 def triangular_fuzzy_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     """
