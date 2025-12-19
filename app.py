@@ -39,7 +39,7 @@ def ahp_calculate():
         else: # 'fuzzy' (triangular_fuzzy_ahp_solver)
             # print("before solver", flush=True)
             # print("matrix:", matrix, type(matrix), flush=True)
-            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, lambda_max, ci, cr, updated_w, k_star = triangular_fuzzy_ahp_solver(n, criteria, matrix)
+            crisp_weights, lower_weights, upper_weights, score, sorted_criteria, lambda_max, gamma, NI, updated_w, k_star = triangular_fuzzy_ahp_solver(n, criteria, matrix)
             # print("updated_w:", updated_w, type(updated_w))
             if lower_weights is None and upper_weights is None and isinstance(updated_w, list):
                 lower_weights = [float(t[0]) for t in updated_w]
@@ -64,8 +64,8 @@ def ahp_calculate():
             'score': score,
             'sorted_criteria': sorted_criteria,
             'lambdaMax': lambda_max,
-            'ci': ci,
-            'cr': cr,
+            'ci': (ci if ahp_variant == 'origin' else gamma),
+            'cr': (cr if ahp_variant == 'origin' else NI),
             'inconsistency_ratios': inconsistency_ratios,
             'extra':{
                 'tfn_weights': updated_w,

@@ -155,53 +155,197 @@ def triangular_fuzzy_ahp_solver(n, criteria, pairwise_matrix):
     # ========================================
     # Calculate lambda_max, CI(output-based), CR
     # ========================================
-    def statistics(n, pairwise_matrix):
+    # def statistics(n, pairwise_matrix):
 
-        A_center = np.array([[pairwise_matrix[i][j][1] for j in range(n)] for i in range(n)])
-        _, lambda_max, ci, cr, _ = ahp_eigen_solver(A_center)
+    #     A_center = np.array([[pairwise_matrix[i][j][1] for j in range(n)] for i in range(n)])
+    #     _, lambda_max, ci, cr, _ = ahp_eigen_solver(A_center)
 
-        return lambda_max, ci, cr
+    #     return lambda_max, ci, cr
     
     #########################
+    def gamma_n_alpha(n, sigma):
+        if n <= 2:
+            return 0.0
+        threshold = (n / 2) ** (n / (n - 2))
+        if sigma <= 1:
+            raise ValueError("sigma must be > 1")
+        if sigma < threshold:
+            denom = max(sigma - sigma ** ((2 - 2*n) / n),
+                        (sigma ** 2) * ((2/n)**(2/(n-2)) - (2/n)**(n/(n-2))))
+            return 1.0 / denom
+        else:
+            denom = max(sigma - sigma ** ((2-2*n)/n),
+                        sigma ** ((2*n-2)/n) - sigma)
+            return 1.0 / denom
+
+
+    def fuzzy_NI(pairwise_matrix, weight_l, weight_c, weight_r, sigma=9.0):
+        """
+        pairwise_matrix: TFN matrix, shape (n,n), element [l,m,u]
+        weight_l, weight_c, weight_r: arrays length n
+        alpha: scale upper bound (Saaty scale이면 9)
+        """
+        n = len(weight_c)
+        gamma = gamma_n_alpha(n, sigma)
+
+        max_dev = 0.0
+        for i in range(n):
+            for j in range(n):
+                aL, aM, aU = pairwise_matrix[i][j]
+
+                rL = weight_l[i] / weight_r[j]   # w_i^L / w_j^U
+                rM = weight_c[i] / weight_c[j]   # w_i^M / w_j^M
+                rU = weight_r[i] / weight_l[j]   # w_i^U / w_j^L
+
+                dL = abs(rL - aL)
+                dM = abs(rM - aM)
+                dU = abs(rU - aU)
+
+                dev_ij = max(dL, dM, dU)
+                if dev_ij > max_dev:
+                    max_dev = dev_ij
+
+        NI = gamma * max_dev
+        return NI, gamma, max_dev
+
     c_min, c_max = calculate_coefficient(n, pairwise_matrix)
     weight_l, weight_c, weight_r, weights_tfn = calculate_weights(n, pairwise_matrix, c_min, c_max)
     score, sorted_criteria, crisp_weights = calculate_rank(n, criteria, weight_c)
-    lambda_max, ci, cr = statistics(n, pairwise_matrix)
+    # lambda_max, ci, cr = statistics(n, pairwise_matrix)
+    NI, gamma, max_dev = fuzzy_NI(pairwise_matrix, weight_l, weight_c, weight_r, sigma=9.0)
     print("\n=== weights_tfn ===", weights_tfn)
     float_weights_tfn = [(float(l), float(c), float(r)) for l, c, r in weights_tfn]
     print("\n=== float_weights_tfn ===", float_weights_tfn)
 
-    return crisp_weights, weight_l, weight_r, score, sorted_criteria, lambda_max, ci, cr, float_weights_tfn, None
+    return crisp_weights, weight_l, weight_r, score, sorted_criteria, None, gamma, NI, float_weights_tfn, None
 
-def calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW, eps=1e-9):
+# def calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW, eps=1e-9):
+#     """
+#     AHP-style inconsistency ratios for BWM
+#     - use CENTER (crisp) weights
+#     - only declared comparisons (Best→Others, Others→Worst)
+#     """
+
+#     w = np.array(crisp_weights, dtype=float)
+
+#     wB = max(w[best_idx], eps)
+#     wW = max(w[worst_idx], eps)
+
+#     # Best → Others inconsistency
+#     bwo = []
+#     for j in range(len(w)):
+#         wj = max(w[j], eps)
+#         aBj = max(aB[j], eps)
+#         bwo.append((wB / wj) / aBj)
+
+#     # Others → Worst inconsistency
+#     wwo = []
+#     for i in range(len(w)):
+#         wi = max(w[i], eps)
+#         aWi = max(aW[i], eps)
+#         wwo.append((wi / wW) / aWi)
+
+#     return {
+#         "best_to_others": bwo,
+#         "others_to_worst": wwo
+#     }
+
+import math
+
+def liang_CRI(aB, aW, worst_idx):
     """
-    AHP-style inconsistency ratios for BWM
-    - use CENTER (crisp) weights
-    - only declared comparisons (Best→Others, Others→Worst)
+    Liang et al. (2020) input-based consistency ratio (CRI)
+    CRI_j = |a_Bj * a_jW - a_BW| / (a_BW^2 - a_BW), a_BW > 1
+    CRI = max_j CRI_j
     """
+    aBW = float(aB[worst_idx])
+    n = len(aB)
 
-    w = np.array(crisp_weights, dtype=float)
+    if aBW <= 1:
+        local = [0.0] * n
+        return 0.0, local, aBW
 
-    wB = max(w[best_idx], eps)
-    wW = max(w[worst_idx], eps)
+    denom = aBW*aBW - aBW
+    local = [abs(float(aB[j]) * float(aW[j]) - aBW) / denom for j in range(n)]
+    return max(local), local, aBW
 
-    # Best → Others inconsistency
-    bwo = []
+
+def liang_xi_max(aBW: float):
+    """
+    Liang et al. (2020) xi_max from quadratic (Eq.(5)):
+      xi^2 - (1 + 2aBW)xi + (aBW^2 - aBW) = 0
+    Use the larger root as xi_max.
+    """
+    A = 1.0
+    B = -(1.0 + 2.0*aBW)
+    C = (aBW*aBW - aBW)
+
+    disc = B*B - 4*A*C
+    disc = max(disc, 0.0)
+
+    r1 = (-B + math.sqrt(disc)) / (2*A)
+    r2 = (-B - math.sqrt(disc)) / (2*A)
+    return max(r1, r2)
+
+
+def liang_CRO(xi_star: float, aBW: float):
+    """
+    Liang et al. (2020) output-based consistency ratio (CRO) = xi* / xi_max
+    """
+    xi_max = liang_xi_max(float(aBW))
+    cro = float(xi_star) / xi_max if xi_max > 0 else 0.0
+    return cro, xi_max
+
+def calculate_bwm_inconsistency_compat(
+    crisp_weights,
+    best_idx,
+    worst_idx,
+    aB,
+    aW,
+    xi_star,
+    eps=1e-12
+):
+    """
+    Returns a dict that is backward-compatible with your old structure:
+      - best_to_others: [...]
+      - others_to_worst: [...]
+
+    PLUS Liang(2020) values:
+      - CRI, CRI_local, CRO, xi_star, xi_max, a_BW
+    """
+    w = np.asarray(crisp_weights, dtype=float)
+    aB = np.asarray(aB, dtype=float)
+    aW = np.asarray(aW, dtype=float)
+
+    wB = max(float(w[best_idx]), eps)
+    wW = max(float(w[worst_idx]), eps)
+
+    # Old-style ratios (keep these keys for frontend compatibility)
+    best_to_others = []
+    others_to_worst = []
     for j in range(len(w)):
-        wj = max(w[j], eps)
-        aBj = max(aB[j], eps)
-        bwo.append((wB / wj) / aBj)
+        wj = max(float(w[j]), eps)
+        aBj = max(float(aB[j]), eps)
+        aWj = max(float(aW[j]), eps)
+        best_to_others.append((wB / wj) / aBj)
+        others_to_worst.append((wj / wW) / aWj)
 
-    # Others → Worst inconsistency
-    wwo = []
-    for i in range(len(w)):
-        wi = max(w[i], eps)
-        aWi = max(aW[i], eps)
-        wwo.append((wi / wW) / aWi)
+    # Liang metrics
+    CRI, CRI_local, aBW = liang_CRI(aB, aW, worst_idx)
+    CRO, xi_max = liang_CRO(xi_star, aBW)
 
     return {
-        "best_to_others": bwo,
-        "others_to_worst": wwo
+        # backward-compatible keys
+        "best_to_others": best_to_others,
+        "others_to_worst": others_to_worst,
+
+        # Liang(2020) additions
+        "CRI": CRI,
+        "CRI_local": CRI_local,
+        "CRO": CRO,
+        "xi_star": float(xi_star),
+        "xi_max": float(xi_max),
+        "a_BW": float(aBW),
     }
 
 def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
@@ -487,43 +631,57 @@ def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     # ========================================
     # Step 5: Calculate CI(output-based), CR
     # ========================================
-    def statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights):
+    # def statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights):
 
-        def get_consistency_index_bwm(aB, worst_idx):
-            a_BW = aB[worst_idx]
+    #     def get_consistency_index_bwm(aB, worst_idx):
+    #         a_BW = aB[worst_idx]
 
-            """BWM Consistency Index lookup table"""
-            ci_table = {
-                1: 0.00, 2: 0.44, 3: 1.00, 4: 1.63, 5: 2.30,
-                6: 3.00, 7: 3.73, 8: 4.47, 9: 5.23
-            }
-            return ci_table.get(a_BW, None), a_BW # if mode_result > 9, return None
-        """
-        BWM Consistency Ratio calculation
+    #         """BWM Consistency Index lookup table"""
+    #         ci_table = {
+    #             1: 0.00, 2: 0.44, 3: 1.00, 4: 1.63, 5: 2.30,
+    #             6: 3.00, 7: 3.73, 8: 4.47, 9: 5.23
+    #         }
+    #         return ci_table.get(a_BW, None), a_BW # if mode_result > 9, return None
+    #     """
+    #     BWM Consistency Ratio calculation
         
-        Parameters:
-        -----------
-        updated_xi : float
-            Optimal xi value (ξ*)
-        a_BW : int
-            Best-to-Worst comparison value
+    #     Parameters:
+    #     -----------
+    #     updated_xi : float
+    #         Optimal xi value (ξ*)
+    #     a_BW : int
+    #         Best-to-Worst comparison value
         
-        Returns:
-        --------
-        ci : float
-            Consistency Index from lookup table
-        cr : float
-            Consistency Ratio = ξ* / CI
-        """
+    #     Returns:
+    #     --------
+    #     ci : float
+    #         Consistency Index from lookup table
+    #     cr : float
+    #         Consistency Ratio = ξ* / CI
+    #     """
 
+    #     center_weights = [0.5*(lo+up) for lo, up in zip(lower_weights, upper_weights)]
+
+    #     ci, a_BW = get_consistency_index_bwm(aB, worst_idx)
+    #     if ci != None:
+    #         cr = updated_xi / ci if ci != 0 else 0
+    #     else:
+    #         cr = None # if ci is None, cr is also None
+    #     return ci, cr, a_BW, updated_xi, center_weights
+
+    def statistics_liang(updated_xi, aB, aW, worst_idx, lower_weights, upper_weights):
         center_weights = [0.5*(lo+up) for lo, up in zip(lower_weights, upper_weights)]
 
-        ci, a_BW = get_consistency_index_bwm(aB, worst_idx)
-        if ci != None:
-            cr = updated_xi / ci if ci != 0 else 0
-        else:
-            cr = None # if ci is None, cr is also None
-        return ci, cr, a_BW, updated_xi, center_weights
+        # (1) Input-based CI/CR: CRI
+        CRI, CRI_local, aBW = liang_CRI(aB, aW, worst_idx)
+
+        # (2) Output-based CI/CR: CRO = xi*/xi_max
+        CRO, xi_max = liang_CRO(updated_xi, aBW)
+
+        ci = CRI
+        cr = CRO
+        return ci, cr, aBW, float(updated_xi), float(xi_max), center_weights, CRI_local
+
     
     #########################
     # solve optimization prob(linear BWM) by using scipy.linprog 
@@ -533,8 +691,21 @@ def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     lower_weights = lower_bound_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsilon)
     upper_weights = maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi, epsilon)
     DP, P, score, sorted_criteria = calculate_rank(n, criteria, lower_weights, upper_weights)
-    ci, cr, a_BW, updated_xi, crisp_weights = statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights)
-    inconsistency_ratios = calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW)
+    # ci, cr, a_BW, updated_xi, crisp_weights = statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights)
+    # inconsistency_ratios = calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW)
+    # ci, cr, a_BW, updated_xi, crisp_weights = statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights)
+    # inconsistency_ratios = calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW)
+    ci, cr, a_BW, updated_xi, xi_max, crisp_weights, CRI_local = statistics_liang(
+        updated_xi, aB, aW, worst_idx, lower_weights, upper_weights
+    )
+    inconsistency_ratios = calculate_bwm_inconsistency_compat(
+    crisp_weights=crisp_weights,
+    best_idx=best_idx,
+    worst_idx=worst_idx,
+    aB=aB,
+    aW=aW,
+    xi_star=updated_xi
+    )
 
     # debugging print
     print("\n=== a_BW ===")
@@ -554,6 +725,12 @@ def linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
 
     print("\n=== inconsistency_ratios ===")
     print(inconsistency_ratios)
+
+    print("\n=== xi_max ===")
+    print(xi_max)
+
+    print("\n=== CRI_local ===")
+    print(CRI_local)
 
     return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr, inconsistency_ratios 
 
@@ -806,44 +983,58 @@ def non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6
     # ========================================
     # Step 5: Calculate CI(output-based), CR
     # ========================================
-    def statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights):
+    # def statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights):
 
-        def get_consistency_index_bwm(aB, worst_idx):
-            a_BW = aB[worst_idx]
+    #     def get_consistency_index_bwm(aB, worst_idx):
+    #         a_BW = aB[worst_idx]
 
-            """BWM Consistency Index lookup table"""
-            ci_table = {
-                1: 0.00, 2: 0.44, 3: 1.00, 4: 1.63, 5: 2.30,
-                6: 3.00, 7: 3.73, 8: 4.47, 9: 5.23
-            }
-            return ci_table.get(a_BW, None), a_BW # if mode_result > 9, return None
-        """
-        BWM Consistency Ratio calculation
+    #         """BWM Consistency Index lookup table"""
+    #         ci_table = {
+    #             1: 0.00, 2: 0.44, 3: 1.00, 4: 1.63, 5: 2.30,
+    #             6: 3.00, 7: 3.73, 8: 4.47, 9: 5.23
+    #         }
+    #         return ci_table.get(a_BW, None), a_BW # if mode_result > 9, return None
+    #     """
+    #     BWM Consistency Ratio calculation
         
-        Parameters:
-        -----------
-        updated_xi : float
-            Optimal xi value (ξ*)
-        a_BW : int
-            Best-to-Worst comparison value
+    #     Parameters:
+    #     -----------
+    #     updated_xi : float
+    #         Optimal xi value (ξ*)
+    #     a_BW : int
+    #         Best-to-Worst comparison value
         
-        Returns:
-        --------
-        ci : float
-            Consistency Index from lookup table
-        cr : float
-            Consistency Ratio = ξ* / CI
-        """
+    #     Returns:
+    #     --------
+    #     ci : float
+    #         Consistency Index from lookup table
+    #     cr : float
+    #         Consistency Ratio = ξ* / CI
+    #     """
 
+    #     center_weights = [0.5*(lo+up) for lo, up in zip(lower_weights, upper_weights)]
+
+    #     ci, a_BW = get_consistency_index_bwm(aB, worst_idx)
+    #     if ci != None:
+    #         cr = updated_xi / ci if ci != 0 else 0
+    #     else:
+    #         cr = None # if ci is None, cr is also None
+    #     return ci, cr, a_BW, updated_xi, center_weights
+    
+    def statistics_liang(updated_xi, aB, aW, worst_idx, lower_weights, upper_weights):
         center_weights = [0.5*(lo+up) for lo, up in zip(lower_weights, upper_weights)]
 
-        ci, a_BW = get_consistency_index_bwm(aB, worst_idx)
-        if ci != None:
-            cr = updated_xi / ci if ci != 0 else 0
-        else:
-            cr = None # if ci is None, cr is also None
-        return ci, cr, a_BW, updated_xi, center_weights
-    
+        # (1) Input-based CI/CR: CRI
+        CRI, CRI_local, aBW = liang_CRI(aB, aW, worst_idx)
+
+        # (2) Output-based CI/CR: CRO = xi*/xi_max
+        CRO, xi_max = liang_CRO(updated_xi, aBW)
+
+        ci = CRI
+        cr = CRO
+        return ci, cr, aBW, float(updated_xi), float(xi_max), center_weights, CRI_local
+
+
     #########################
     # solve optimization prob(linear BWM) by using scipy.linprog 
     # return value would be same with AHP(wiehg, ci, cr ..)
@@ -851,20 +1042,21 @@ def non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6
     lower_weights = lower_bound_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi)
     upper_weights = maximize_weights(n, best_idx, worst_idx, aB, aW, updated_w, updated_xi)
     DP, P, score, sorted_criteria = calculate_rank(n, criteria, lower_weights, upper_weights)
-    ci, cr, a_BW, updated_xi, crisp_weights = statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights)
-    inconsistency_ratios = calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW)
+    # ci, cr, a_BW, updated_xi, crisp_weights = statistics(updated_xi, aB, worst_idx, lower_weights, upper_weights)
+    # inconsistency_ratios = calculate_bwm_inconsistency(crisp_weights, best_idx, worst_idx, aB, aW)
+    ci, cr, a_BW, updated_xi, xi_max, crisp_weights, CRI_local = statistics_liang(
+        updated_xi, aB, aW, worst_idx, lower_weights, upper_weights
+    )
+    inconsistency_ratios = calculate_bwm_inconsistency_compat(
+    crisp_weights=crisp_weights,
+    best_idx=best_idx,
+    worst_idx=worst_idx,
+    aB=aB,
+    aW=aW,
+    xi_star=updated_xi
+    )
 
     # debugging print
-    # print("\n=== DP Matrix ===")
-    # df_DP = pd.DataFrame(DP, index=criteria, columns=criteria)
-    # print(df_DP)
-    # print("="*50 + "\n")
-
-    # print("\n=== Preference Matrix (P) ===")
-    # df_P = pd.DataFrame(P, index=criteria, columns=criteria)
-    # print(df_P)
-    # print("="*50 + "\n")
-
     print("\n=== a_BW ===")
     print(a_BW)
 
@@ -883,7 +1075,24 @@ def non_linear_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6
     print("\n=== inconsistency_ratios ===")
     print(inconsistency_ratios)
 
-    return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr, inconsistency_ratios
+    print("\n=== xi_max ===")
+    print(xi_max)
+
+    print("\n=== CRI_local ===")
+    print(CRI_local)
+
+    return crisp_weights, lower_weights, upper_weights, score, sorted_criteria, ci, cr, inconsistency_ratios 
+
+    # debugging print
+    # print("\n=== DP Matrix ===")
+    # df_DP = pd.DataFrame(DP, index=criteria, columns=criteria)
+    # print(df_DP)
+    # print("="*50 + "\n")
+
+    # print("\n=== Preference Matrix (P) ===")
+    # df_P = pd.DataFrame(P, index=criteria, columns=criteria)
+    # print(df_P)
+    # print("="*50 + "\n")
 
 def triangular_fuzzy_bwm_solver(n, criteria, best_idx, worst_idx, aB, aW, epsilon=1e-6):
     """
